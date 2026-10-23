@@ -88,89 +88,103 @@ function fit() {
 addEventListener('resize', fit);
 fit();
 
-/* ── модель и шарниры ── */
-// В файле ось Z смотрит вверх, лицо — в −Y. Поворачиваем корень, а внутри работаем в координатах модели.
+/* ── модель и кости ── */
+// Модель сгенерирована нейросетью (Hunyuan 3D) одним цельным мешем, без скелета.
+// Кости ставим сами, а веса считаем по высоте и ширине: что выше бёдер — торс, выше шеи — голова и т. д.
+// Внутри MODEL работаем в единицах файла: рост 1.15, Y вверх, лицо смотрит в +Z.
+const S = 2.6 / 1.15;
 const MODEL = new THREE.Group();
-MODEL.rotation.x = -Math.PI / 2;
+MODEL.scale.setScalar(S);
 MODEL.userData.abs = [0, 0, 0];
 scene.add(MODEL);
 
 function joint(parent, abs) {
-  const g = new THREE.Group();
+  const b = new THREE.Bone();
   const pa = parent.userData.abs;
-  g.position.set(abs[0] - pa[0], abs[1] - pa[1], abs[2] - pa[2]);
-  g.userData.abs = abs;
-  g.userData.base = g.position.clone();
-  parent.add(g);
-  return g;
+  b.position.set(abs[0] - pa[0], abs[1] - pa[1], abs[2] - pa[2]);
+  b.userData.abs = abs;
+  parent.add(b);
+  return b;
 }
 
 const J = {};
 J.body = joint(MODEL, [0, 0, 0]);
-J.torso = joint(J.body, [0, 0, 1.05]);
-J.head = joint(J.torso, [0, -0.02, 1.93]);
-J.hair = joint(J.head, [0, 0, 2.3]);
-J.eyeL = joint(J.head, [-0.09, -0.218, 2.18]);
-J.eyeR = joint(J.head, [0.09, -0.218, 2.18]);
-J.lookL = joint(J.eyeL, [-0.09, -0.218, 2.18]);
-J.lookR = joint(J.eyeR, [0.09, -0.218, 2.18]);
-J.browL = joint(J.head, [-0.09, -0.223, 2.225]);
-J.browR = joint(J.head, [0.09, -0.223, 2.225]);
-J.mouth = joint(J.head, [0, -0.221, 2.045]);
-J.armL = joint(J.torso, [-0.42, 0.015, 1.78]);
-J.armR = joint(J.torso, [0.42, 0.015, 1.78]);
+J.torso = joint(J.body, [0, 0.5, 0]);
+J.head = joint(J.torso, [0, 0.95, -0.02]);
+J.jaw = joint(J.head, [0, 0.99, -0.03]);
+// Рук-костей нет: у модели рукава прижаты к пиджаку, и при любом взмахе бок тянется за рукой «перепонкой».
+// Руки едут вместе с торсом, а живость дают голова, корпус, прыжки и рот.
+const BONES = [J.body, J.torso, J.head, J.jaw];
 
-// деталь → [шарнир, зона для тыка]
-function partOf(name) {
-  if (name === 'Mouth') return [J.mouth, 'head'];
-  if (name === 'Nose') return [J.head, 'nose'];
-  if (/^L (iris|pupil)$/.test(name)) return [J.lookL, 'head'];
-  if (/^R (iris|pupil)$/.test(name)) return [J.lookR, 'head'];
-  if (name === 'L eye') return [J.eyeL, 'head'];
-  if (name === 'R eye') return [J.eyeR, 'head'];
-  if (name === 'L eyebrow') return [J.browL, 'head'];
-  if (name === 'R eyebrow') return [J.browR, 'head'];
-  if (/^(Curl|Hair base)/.test(name)) return [J.hair, 'head'];
-  if (/bandana|Bandana print/i.test(name)) return [J.head, 'bandana'];
-  if (/^(Face|L ear|R ear)$/.test(name)) return [J.head, 'head'];
-  if (/^Left (sleeve|forearm|hand)$/.test(name)) return [J.armL, 'handL'];
-  if (/^Right (sleeve|forearm|hand)$/.test(name)) return [J.armR, 'handR'];
-  if (/shoe|trouser|knee/i.test(name)) return [J.body, 'feet'];
-  return [J.torso, 'belly'];
+// открытый рот: у модели нет полости рта, поэтому кладём на губы тёмный овал и растягиваем его
+const mouthHole = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 20, 12),
+  new THREE.MeshStandardMaterial({ color: 0x3a1012, roughness: 0.9 }),
+);
+{
+  const a = J.head.userData.abs;
+  mouthHole.position.set(0 - a[0], 0.972 - a[1], 0.073 - a[2]);
+  mouthHole.visible = false;
+  J.head.add(mouthHole);
+}
+
+const ss = (e0, e1, x) => { const t = clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+
+// вес точки: [кость, вес] для тела, торса, головы и челюсти
+function weightsAt(x, y, z) {
+  const ax = Math.abs(x);
+  const spine = ss(0.44, 0.56, y);
+  const head = ss(0.93, 0.965, y) * (y < 0.98 ? 1 - ss(0.1, 0.13, ax) : 1);
+  const jaw = ss(0.978, 0.968, y) * ss(0.935, 0.95, y) * ss(0.01, 0.04, z) * ss(0.05, 0.035, ax);
+  return [
+    [0, 1 - spine],
+    [1, spine * (1 - head)],
+    [2, spine * head * (1 - jaw)],
+    [3, spine * head * jaw],
+  ];
+}
+
+// зона для тыка — по точке модели в исходной позе
+function zoneAt(x, y, z) {
+  const ax = Math.abs(x);
+  if (y > 0.93 && ax < 0.12) {
+    if (ax < 0.02 && y > 0.985 && y < 1.015 && z > 0.075) return 'nose';
+    if (y > 1.03 && y < 1.078) return 'bandana';
+    return 'head';
+  }
+  if (y < 0.45) return 'feet';
+  if (ax > 0.142 - 0.027 * ss(0.56, 0.66, y) && y > 0.455 && y < 0.86) return x < 0 ? 'handL' : 'handR';
+  return 'belly';
 }
 
 const hitMeshes = [];
+let skin = null;
 
 function setupModel(root) {
-  const meshes = [];
-  root.traverse((o) => o.isMesh && meshes.push(o));
-  for (const m of meshes) {
-    // в файле нет нормалей; у коробок (галстук, лацканы, рот) делаем гранёные
-    let geo = m.geometry;
-    if (!geo.attributes.normal) {
-      if (geo.attributes.position.count <= 40 && geo.index) geo = m.geometry = geo.toNonIndexed();
-      geo.computeVertexNormals();
-    }
-    m.castShadow = true;
-    // GLTFLoader меняет пробелы в именах на «_»
-    const [j, zone] = partOf((m.name || '').replace(/_/g, ' '));
-    m.userData.zone = zone;
-    const a = j.userData.abs;
-    m.position.set(-a[0], -a[1], -a[2]);
-    m.rotation.set(0, 0, 0);
-    m.scale.set(1, 1, 1);
-    j.add(m);
-    hitMeshes.push(m);
-    // цвета в файле записаны как sRGB, а читаются как линейные — без этого чёрный костюм выходит серым
-    const mat = m.material;
-    if (mat && !mat.userData.fixed) {
-      mat.userData.fixed = true;
-      mat.color.convertSRGBToLinear();
-      if (mat.name === 'Skin') mat.roughness = 0.6;
-      if (mat.name === 'Black shoes') mat.roughness = 0.25;
-      if (mat.name === 'Black suit') mat.roughness = 0.8;
-    }
+  let src = null;
+  root.updateMatrixWorld(true);
+  root.traverse((o) => { if (o.isMesh && !src) src = o; });
+  const geo = src.geometry.clone();
+  geo.applyMatrix4(src.matrixWorld); // поворот узла из файла запекаем в геометрию
+
+  const pos = geo.attributes.position, n = pos.count;
+  const idx = new Uint16Array(n * 4), wts = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const w = weightsAt(pos.getX(i), pos.getY(i), pos.getZ(i));
+    const sum = w.reduce((t, [, v]) => t + v, 0) || 1;
+    w.forEach(([b, v], k) => { idx[i * 4 + k] = b; wts[i * 4 + k] = v / sum; });
   }
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wts, 4));
+
+  skin = new THREE.SkinnedMesh(geo, src.material);
+  skin.castShadow = true;
+  skin.frustumCulled = false;
+  MODEL.add(skin);
+  skin.add(J.body);
+  MODEL.updateMatrixWorld(true);
+  skin.bind(new THREE.Skeleton(BONES));
+  hitMeshes.push(skin);
 }
 
 /* ── позы ── */
@@ -403,7 +417,7 @@ const headTop = new THREE.Vector3();
 function placeBubble() {
   if (bubbleEl.hidden) return;
   if (now() > bubbleUntil) { bubbleEl.hidden = true; return; }
-  J.head.localToWorld(headTop.set(0.18, -0.15, 0.62)).project(camera);
+  J.head.localToWorld(headTop.set(0.08, 0.19, 0)).project(camera);
   const x = (headTop.x * 0.5 + 0.5) * innerWidth;
   const y = (-headTop.y * 0.5 + 0.5) * innerHeight;
   const w = bubbleEl.offsetWidth, h = bubbleEl.offsetHeight;
@@ -474,13 +488,14 @@ const REACT = {
     });
   },
   hand(side) {
-    say(pick(['Здарова, бро!', 'Дай пять!', 'Йоу!', 'Приветики']));
-    const s = side === 'handL' ? 1 : -1;
-    act(1.8, (t, p) => {
-      const k = ramp(t, 0, 0.3) * (1 - ramp(t, 1.4, 1.8));
-      p[side === 'handL' ? 'armLY' : 'armRY'] += s * 2.5 * k;
-      p[side === 'handL' ? 'armLX' : 'armRX'] += 0.35 * Math.sin(t * 14) * k;
-      p.headY -= s * 0.12 * k;
+    say(pick(['Здарова, бро!', 'Дай пять!', 'Йоу!', 'Чё по руке-то?']));
+    const s = side === 'handL' ? -1 : 1; // сторона, куда ткнули (по X)
+    act(1.6, (t, p) => {
+      const k = ramp(t, 0, 0.25) * (1 - ramp(t, 1.2, 1.6));
+      p.headZ += 0.4 * s * k;
+      p.headX += 0.18 * k;
+      p.torsoY += 0.1 * s * k;
+      p.bodyY += 0.05 * Math.abs(Math.sin(t * 9)) * k;
       p.mouth += 0.4 * k;
       p.brow += 0.6 * k;
     });
@@ -596,12 +611,12 @@ const sphere = new THREE.SphereGeometry(1, 16, 12);
 function puff() {
   const m = new THREE.Mesh(sphere, puffMat.clone());
   const side = Math.random() < 0.5 ? -1 : 1;
-  m.position.set(side * rand(0.3, 0.45), rand(0.05, 0.25), rand(0.9, 1.1));
+  m.position.set(side * rand(0.1, 0.17), rand(0.42, 0.5), rand(-0.13, -0.06));
   J.body.add(m);
-  const v = new THREE.Vector3(side * rand(0.35, 0.6), rand(-0.1, 0.1), rand(0.15, 0.4));
+  const v = new THREE.Vector3(side * rand(0.15, 0.27), rand(0.07, 0.18), rand(-0.05, 0));
   fx.push({ t: 0, dur: 1.8, update(t) {
     m.position.addScaledVector(v, 1 / 60);
-    m.scale.setScalar(0.08 + 0.3 * ramp(t, 0, 1.2));
+    m.scale.setScalar(0.02 + 0.06 * ramp(t, 0, 1.2));
     m.material.opacity = 0.6 * (1 - ramp(t, 0.6, 1.8));
   }, done() { J.body.remove(m); m.material.dispose(); } });
 }
@@ -626,9 +641,9 @@ function makePie() {
 const splat = new THREE.Group();
 const splatIn = new THREE.Group();
 {
-  const FACE = [0, -0.245, 2.1];
-  const blobs = [[0, -0.245, 2.1, 0.2, 0.05, 0.19], [-0.12, -0.22, 2.2, 0.09, 0.04, 0.08], [0.13, -0.225, 2.03, 0.08, 0.04, 0.09],
-    [0.04, -0.25, 1.95, 0.05, 0.03, 0.07], [-0.08, -0.24, 1.98, 0.035, 0.025, 0.06]];
+  const FACE = [0, 0.995, 0.088];
+  const blobs = [[0.004, 0.993, 0.086, 0.032, 0.028, 0.013], [-0.026, 1.012, 0.078, 0.014, 0.012, 0.009], [0.027, 0.976, 0.074, 0.012, 0.013, 0.009],
+    [0.008, 0.958, 0.07, 0.007, 0.012, 0.006], [-0.017, 0.965, 0.072, 0.005, 0.01, 0.005]];
   for (const [x, y, z, sx, sy, sz] of blobs) {
     const m = new THREE.Mesh(sphere, cream);
     m.position.set(x - FACE[0], y - FACE[1], z - FACE[2]);
@@ -636,8 +651,8 @@ const splatIn = new THREE.Group();
     splatIn.add(m);
   }
   const c = new THREE.Mesh(sphere, berry);
-  c.position.set(0.03, -0.29 - FACE[1], 2.13 - FACE[2]);
-  c.scale.setScalar(0.035);
+  c.position.set(0.006 - FACE[0], 0.998 - FACE[1], 0.1 - FACE[2]);
+  c.scale.setScalar(0.007);
   splatIn.add(c);
   const a = J.head.userData.abs;
   splat.position.set(FACE[0] - a[0], FACE[1] - a[1], FACE[2] - a[2]);
@@ -654,7 +669,7 @@ function throwCake() {
   sfx.whoosh();
   act(4, (t, p, a) => {
     if (t < 0.45) {
-      J.head.localToWorld(to.set(0, -0.32, 0.17));
+      J.head.localToWorld(to.set(0, 0.045, 0.14));
       const k = t / 0.45;
       pie.position.lerpVectors(from, to, k);
       pie.position.y += Math.sin(Math.PI * k) * 0.4;
@@ -821,7 +836,8 @@ canvas.addEventListener('pointerdown', (e) => {
   ray.setFromCamera(ndc, camera);
   const hit = ray.intersectObjects(hitMeshes, false)[0];
   if (!hit) return;
-  react(hit.object.userData.zone);
+  const pos = skin.geometry.attributes.position, i = hit.face.a;
+  react(zoneAt(pos.getX(i), pos.getY(i), pos.getZ(i)));
 });
 function react(zone) {
   if (zone === 'handL' || zone === 'handR') REACT.hand(zone);
@@ -880,28 +896,18 @@ let ready = false;
 const clock = new THREE.Clock();
 const listenDot = listenEl.querySelector('i');
 
+// Оси внутри модели: Y вверх, лицо в +Z. Значения поз придуманы в «метрах на экране», поэтому смещения делим на S.
 function apply(p) {
   const b = J.body, s = p.squash;
-  b.position.z = p.bodyY;
-  b.rotation.z = p.bodyRot;
-  b.scale.set(1 + s * 0.5, 1 + s * 0.5, 1 - s);
-  J.torso.rotation.set(p.torsoX, p.torsoY, p.torsoZ);
-  J.head.rotation.set(p.headX, p.headY, p.headZ);
-  J.armL.rotation.set(p.armLX, p.armLY, 0);
-  J.armR.rotation.set(p.armRX, p.armRY, 0);
-  const m = Math.max(0, p.mouth);
-  J.mouth.scale.set(1 + p.mouthW * 0.35 + m * 0.15, 1 + m * 0.8, 1 + m * 5.5);
-  const blink = 1 - 0.92 * clamp01(p.blink);
-  J.eyeL.scale.z = J.eyeR.scale.z = blink;
-  for (const [br, base] of [[J.browL, J.browL.userData.base], [J.browR, J.browR.userData.base]]) br.position.z = base.z + p.brow * 0.018;
-  J.browL.rotation.y = -p.brow * 0.12;
-  J.browR.rotation.y = p.brow * 0.12;
-  const ex = Math.max(-1, Math.min(1, p.eyeX)), ey = Math.max(-1, Math.min(1, p.eyeY));
-  J.lookL.position.x = J.lookL.userData.base.x + (ex + p.cross) * 0.011;
-  J.lookR.position.x = J.lookR.userData.base.x + (ex - p.cross) * 0.011;
-  J.lookL.position.z = J.lookL.userData.base.z + ey * 0.008;
-  J.lookR.position.z = J.lookR.userData.base.z + ey * 0.008;
-  J.hair.scale.set(1 + p.hair * 0.04, 1 + p.hair * 0.04, 1 + p.hair * 0.1);
+  b.position.y = p.bodyY / S;
+  b.rotation.y = p.bodyRot;
+  b.scale.set(1 + s * 0.5, 1 - s, 1 + s * 0.5);
+  J.torso.rotation.set(p.torsoX, p.torsoZ, -p.torsoY);
+  J.head.rotation.set(p.headX + p.brow * 0.03, p.headZ, -p.headY);
+  const m = clamp01(p.mouth);
+  J.jaw.rotation.x = m * 0.1;
+  mouthHole.visible = m > 0.03;
+  mouthHole.scale.set(0.013 * (1 + p.mouthW * 0.3 + m * 0.2), 0.001 + 0.006 * m, 0.011);
 }
 
 function tick() {
