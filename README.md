@@ -69,7 +69,7 @@ public/tengiz/index.html        лендинг игры (+ landing.css, карт
 public/tengiz/play/index.html   игра: разметка
 public/tengiz/play/style.css    оформление игры
 public/tengiz/play/game.js      сцена, анимации, звуки, микрофон
-public/tengiz/play/tengiz.glb   модель (Hunyuan 3D V3 по референсу, текстуры ужаты до JPEG; скелета нет — кости ставит game.js)
+public/tengiz/play/tengiz.glb   модель (текстуры ужаты до JPEG; скелета нет — кости ставит game.js)
 public/tengiz/play/vendor/ three.js r169 локально, без CDN
 ```
 
