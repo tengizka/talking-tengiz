@@ -40,7 +40,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   pointer-events: none;
 }
 .top > * { pointer-events: auto; }
-.logo { font: 700 13px/1.1 var(--f-brand); letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.logo { text-decoration: none; font: 700 13px/1.1 var(--f-brand); letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
 .logo b { color: var(--ink); }
 .chip {
   min-height: 44px; padding: 0 16px; border-radius: 999px;

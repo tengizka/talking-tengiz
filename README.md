@@ -59,17 +59,18 @@ Unbounded (логотип), Caveat (подпись). Все пары «текс�
 
 ## Говорящий Тенгиз
 
-Игра-прикол в духе «Говорящего Тома»: `public/tengiz/` → на сайте `/tengiz/`.
+Игра-прикол в духе «Говорящего Тома». На сайте: `/tengiz/` — лендинг игры, `/tengiz/play/` — сама игра.
 Тыкаешь в голову, нос, бандану, живот, руки и ноги, он реагирует (4 тыка в голову подряд —
 обидится, 3 быстрых в живот — щекотно). Кнопки: танец, пук, торт в лицо, «сказать» текстом.
 Микрофон: говоришь фразу, он повторяет голосом бурундука, баса или робота (переключатель сверху).
 
 ```
-public/tengiz/index.html   разметка
-public/tengiz/style.css    оформление
-public/tengiz/game.js      сцена, анимации, звуки, микрофон
-public/tengiz/tengiz.glb   модель (Hunyuan 3D V3 по референсу, текстуры ужаты до JPEG; скелета нет — кости ставит game.js)
-public/tengiz/vendor/      three.js r169 локально, без CDN
+public/tengiz/index.html        лендинг игры (+ landing.css, картинки и og.png в img/)
+public/tengiz/play/index.html   игра: разметка
+public/tengiz/play/style.css    оформление игры
+public/tengiz/play/game.js      сцена, анимации, звуки, микрофон
+public/tengiz/play/tengiz.glb   модель (Hunyuan 3D V3 по референсу, текстуры ужаты до JPEG; скелета нет — кости ставит game.js)
+public/tengiz/play/vendor/ three.js r169 локально, без CDN
 ```
 
 Модель — цельный меш без скелета. game.js ставит кости (тело, торс, голова, челюсть) и считает веса
