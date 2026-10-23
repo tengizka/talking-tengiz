@@ -429,6 +429,7 @@ export async function build(log = true) {
     const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
     for (const f of walk(pub)) {
       const rel = f.slice(pub.length + 1).split(/[\\/]/).join('/');
+      mkdirSync(dirname(join(OUT, rel)), { recursive: true });
       copyFileSync(f, join(OUT, rel));
     }
   }
